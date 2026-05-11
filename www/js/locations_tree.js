@@ -93,6 +93,24 @@ function editLoc(id) {
     $('#e-name').focus();
 }
 
+function deleteLocation() {
+    var id  = parseInt($('#e-id').val());
+    var loc = locations.find(function(l) { return l.id === id; });
+    if (!confirm('Delete "' + (loc ? loc.name : 'this location') + '"?')) return;
+    $.ajax({
+        url: '?go=locations.delete&id=' + id, method: 'POST',
+        success: function() {
+            showEdit(false);
+            loadLocations();
+            showMsg('Deleted', true);
+        },
+        error: function(xhr) {
+            var r = xhr.responseJSON;
+            showMsg(r && r.error ? r.error : 'Delete failed', false);
+        }
+    });
+}
+
 function saveLocation() {
     var id     = parseInt($('#e-id').val());
     var name   = $('#e-name').val().trim();

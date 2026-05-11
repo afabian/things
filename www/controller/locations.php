@@ -39,6 +39,15 @@ if (!$location) api_exit(['error' => 'Not found'], 404);
 api_exit($location);
 }
 
+function delete()
+{
+$id = (int)($input['id'] ?? 0);
+if (!$id) api_exit(['error' => 'Missing id'], 400);
+$result = action('do_delete_location', $id);
+if (isset($result['error'])) api_exit($result, 400);
+api_exit($result);
+}
+
 function post()
 {
 }

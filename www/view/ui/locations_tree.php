@@ -27,6 +27,7 @@
     <div class="row"><span class="lbl"></span>
         <button class="btn-ok" onclick="saveLocation()">Save</button>
         <button onclick="showEdit(false)">Cancel</button>
+        <button class="btn-del" onclick="deleteLocation()">Delete</button>
     </div>
 </div>
 
