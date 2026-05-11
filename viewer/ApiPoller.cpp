@@ -67,19 +67,24 @@ void ApiPoller::reportServerDown()
 
 void ApiPoller::onWsMessage(const QString &msg)
 {
-    auto root     = QJsonDocument::fromJson(msg.toUtf8()).object();
-    int  newItemId = root["last_scanned_item_id"].toInt(0);
+    auto    root        = QJsonDocument::fromJson(msg.toUtf8()).object();
+    int     newItemId   = root["last_scanned_item_id"].toInt(0);
+    QString newUpdatedAt = root["updated_at"].toString();
 
     if (!m_initialized) {
-        m_lastItemId  = newItemId;
-        m_initialized = true;
+        m_lastItemId    = newItemId;
+        m_lastUpdatedAt = newUpdatedAt;
+        m_initialized   = true;
         return; // silent first message — don't pop up on pre-existing state
     }
 
-    if (newItemId == m_lastItemId) return;
+    bool scanHappened = !newUpdatedAt.isEmpty() && (newUpdatedAt != m_lastUpdatedAt);
 
-    m_lastItemId = newItemId;
-    fetchViewerData();
+    m_lastItemId    = newItemId;
+    m_lastUpdatedAt = newUpdatedAt;
+
+    if (scanHappened && newItemId != 0)
+        fetchViewerData();
 }
 
 // --- Fetch full viewer data on item change ---

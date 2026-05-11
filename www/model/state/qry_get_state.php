@@ -17,5 +17,6 @@ return [
     'follow_mode'           => (bool)$row['follow_mode'],
     'last_scanned_qr'       => $row['last_scanned_qr'],
     'last_scanned_item_id'  => $row['last_scanned_item_id'] ? (int)$row['last_scanned_item_id'] : null,
+    'updated_at'            => $row['updated_at'],
 ];
 }

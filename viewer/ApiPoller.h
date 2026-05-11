@@ -49,9 +49,10 @@ private:
     QTimer                m_reconnectTimer;
     QTimer                m_serverDownTimer;
 
-    int  m_lastItemId    = -1;
-    bool m_initialized   = false;
-    bool m_serverUp      = true;
-    bool m_everConnected = false;
-    bool m_fetchPending  = false;
+    int     m_lastItemId    = -1;
+    QString m_lastUpdatedAt;
+    bool    m_initialized   = false;
+    bool    m_serverUp      = true;
+    bool    m_everConnected = false;
+    bool    m_fetchPending  = false;
 };
