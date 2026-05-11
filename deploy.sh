@@ -15,8 +15,8 @@ rsync -a --delete \
 
 echo "Setting up server directories ..."
 ssh $SERVER "
-    mkdir -p $DEST/parsed/dev $DEST/parsed/prod
-    chmod 777 $DEST/parsed $DEST/parsed/dev $DEST/parsed/prod
+    mkdir -p $DEST/parsed/dev $DEST/parsed/prod $DEST/uploads
+    chmod 777 $DEST/parsed $DEST/parsed/dev $DEST/parsed/prod $DEST/uploads
 "
 
 echo "Done. http://$SERVER/things/"
