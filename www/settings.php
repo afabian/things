@@ -14,3 +14,7 @@ $fbx['settings'] = array(
     'anthropic_api_key'  => '',
     'anthropic_model'    => 'claude-sonnet-4-6',
 );
+
+// Local overrides — gitignored, never committed. Put secrets here.
+if (file_exists(__DIR__ . '/settings.local.php'))
+    require __DIR__ . '/settings.local.php';
