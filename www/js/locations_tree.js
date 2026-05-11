@@ -18,27 +18,22 @@ function showEdit(show) {
     $('#edit-panel').toggle(show);
 }
 
-function buildTree(locs, parentId) {
+function buildTreeRows(locs, parentId, depth) {
     var children = locs.filter(function(l) {
         return parentId === null ? !l.parent_id : l.parent_id === parentId;
     });
-    if (!children.length) return '';
-    var html = '<table style="margin-bottom:2px"><tbody>';
+    var html = '';
     children.forEach(function(loc) {
         var kids = locs.filter(function(l) { return l.parent_id === loc.id; });
         html += '<tr>' +
-            '<td style="width:16px;color:#555">&gt;</td>' +
-            '<td><strong style="color:#ddd">' + esc(loc.name) + '</strong></td>' +
-            '<td style="width:140px;color:#555" class="mono">' + esc(loc.qr_serial) + '</td>' +
-            '<td style="width:70px;color:#555">' + kids.length + ' child' + (kids.length === 1 ? '' : 's') + '</td>' +
-            '<td style="width:60px"><a href="#" onclick="editLoc(' + loc.id + ');return false">edit</a></td>' +
+            '<td style="padding-left:' + (depth * 16 + 4) + 'px">' +
+                '<strong style="color:#ddd">' + esc(loc.name) + '</strong></td>' +
+            '<td class="mono" style="color:#555">' + esc(loc.qr_serial) + '</td>' +
+            '<td style="color:#555">' + kids.length + ' ' + (kids.length === 1 ? 'child' : 'children') + '</td>' +
+            '<td><a href="#" onclick="editLoc(' + loc.id + ');return false">edit</a></td>' +
             '</tr>';
-        if (kids.length) {
-            html += '<tr><td></td><td colspan="4" style="padding-left:14px">' +
-                buildTree(locs, loc.id) + '</td></tr>';
-        }
+        html += buildTreeRows(locs, loc.id, depth + 1);
     });
-    html += '</tbody></table>';
     return html;
 }
 
@@ -46,8 +41,12 @@ function loadLocations() {
     $.getJSON('?go=locations.tree', function(locs) {
         locations = locs;
         populateParentSelects();
-        $('#tree-container').html(locs.length ? buildTree(locs, null) :
-            '<div style="color:#555">No locations yet.</div>');
+        var rows = buildTreeRows(locs, null, 0);
+        $('#tree-container').html(rows
+            ? '<table style="width:100%;border-collapse:collapse">' +
+              '<colgroup><col><col style="width:160px"><col style="width:90px"><col style="width:50px"></colgroup>' +
+              '<tbody>' + rows + '</tbody></table>'
+            : '<div style="color:#555">No locations yet.</div>');
     });
 }
 
