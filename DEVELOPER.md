@@ -58,10 +58,11 @@ Everything runs from a single git clone:
 bash deploy.sh    # git pull on server, rebuild wsserver, restart service
 ```
 
-Web app changes are live immediately after pull. Viewer changes need a manual rebuild:
+Viewer changes need a manual rebuild and relaunch:
 
 ```bash
 ssh 10.0.0.10 "cd ~/things/viewer && cmake --build build"
+# then relaunch the viewer on the server desktop
 ```
 
 ---
@@ -70,15 +71,14 @@ ssh 10.0.0.10 "cd ~/things/viewer && cmake --build build"
 
 ```
 www/
-├── controller/     One file per controller; routes ?go=controller.method
+├── controller/     One file per controller
 ├── model/          Query and action files grouped by controller name
 ├── view/           Pure HTML views (no inline PHP or JS)
 ├── layout/         Page wrapper templates
-├── lib/            Auto-injected utilities (api_exit, api_input, db_esc, etc.)
-├── plugins/        Firebox dev plugins (debug, profiler, queries, menu)
+├── lib/            Auto-injected utilities
 ├── js/             External JS files for views
 ├── settings.php    App config — no secrets
-└── settings.local.php  ← gitignored; secrets and local overrides go here
+└── settings.local.php  ← gitignored; secrets and local overrides
 ```
 
 ---
@@ -88,16 +88,16 @@ www/
 Firebox MVC framework. Routing: `?go=controller.method` or clean URL `/things/controller.method`.
 
 **Critical Firebox rules:**
-- Closing `}` must be at column 0 in all controller/model/lib files (compiler block detection)
-- Views must be pure HTML — no inline PHP content, all JS in external `.js` files
-- `api_exit($data, $code)` calls `exit` — `post()` is always empty in API controllers
+- Closing `}` must be at column 0 in all controller/model/lib files
+- Views must be pure HTML — no inline PHP, all JS in external `.js` files
+- `api_exit($data, $code)` calls `exit` — `post()` always empty in API controllers
 - `api_input()` returns `array_merge($_GET, $parsed_json_body)`
 - Lib files in `lib/` are auto-injected into every compiled file
 - Clear compiled cache: `rm -f ~/things/www/parsed/dev/*.php`
 - `$GLOBALS['fbx']['site_root']` gives the path to `www/` — use for file I/O
 
-**Secrets:** put API keys and passwords in `www/settings.local.php` (gitignored).
-`settings.php` loads it at the end if it exists. Never put secrets in `settings.php` itself.
+**Secrets:** put API keys in `www/settings.local.php` (gitignored). `settings.php`
+loads it at the end if it exists.
 
 ---
 
@@ -108,51 +108,51 @@ C++/Qt6. Listens on two ports:
 - **8766** — UDP notify from PHP (localhost only)
 
 On UDP datagram: immediately fetches `state.get` and broadcasts to all WS clients if changed.
-10-second fallback poll catches anything missed.
+10-second fallback poll. Service runs as `afabian`, managed by systemd.
 
-Service runs as `afabian`, managed by systemd. Rebuilds automatically on `deploy.sh`.
+The broadcast JSON includes `updated_at` from `app_state`, which the Qt viewer uses
+to detect new scans (including re-scanning the same item).
 
 ---
 
 ## Qt Desktop Viewer (`viewer/`)
 
-Tray application. Full-screen on item scan, hidden otherwise. Built and run on the server.
+Tray application. Full-screen on item scan, hidden otherwise.
 
 - Connects to `ws://[server]/things/ws` for state push
-- On `last_scanned_item_id` change: HTTP-fetches `/viewer.get` for full item + reference data
-- Reconnects every 3s on WS disconnect; reports server down after 2s disconnected
+- Triggers on `updated_at` change (not just item_id change) — handles same-item rescans
+- First WS message silently initializes state — no popup on app startup
 - Full-screen layout: DocViewer (70% left) + ItemPanel (30% right)
 - DocViewer: QPdfView (PDF), QLabel (images), QTextBrowser (markdown)
-  - PDF loading: write to QTemporaryFile, check `status()` after load (not return value — API differs between Qt 6.2 and 6.4)
-- HID scanner: evdev direct read with `EVIOCGRAB` exclusive grab; device configured in Settings
+  - PDF: check `status()` after load, not return value (Qt 6.2 vs 6.4 API difference)
+- `BrowserWindow`: embedded QWebEngineView for management website
+  - Opened from tray menu, no browser chrome
+  - Hides on close (preserved), geometry saved/restored via QSettings
+- Application icon set at QApplication level in main.cpp — all windows inherit it
+- HID scanner: evdev direct read with EVIOCGRAB exclusive grab
 - Display wake: D-Bus `org.gnome.ScreenSaver.SetActive(false)` on each new scan
 - Mute: suppresses auto-show, tray icon grays out
-- Error overlay: `ErrorOverlay` class — reusable floating dark-red banner
-
-GNOME autostart: `~/.config/autostart/things-viewer.desktop`
+- Error overlay: `ErrorOverlay` class — reusable dark-red banner
 
 ---
 
 ## AI Extract
 
-Users can query reference documents (PDF or image) using Claude to extract specific sections.
-Each query can return multiple results — e.g. "pinout and register table" → two separate docs.
+Users query reference documents (PDF, image, or external URL) using Claude to extract sections.
+Multiple sections can be returned from one query (e.g. "pinout and register table" → two docs).
 
 **Flow:**
-1. User selects a source reference and types a query in the web UI item detail page
-2. `POST references.ai_generate&item_id=N` with `{ref_id, query}`
-3. PHP reads the file, base64-encodes it, sends to Anthropic API
-4. Claude returns a JSON array of `{name, content}` pairs
-5. Each pair saved as a new `.md` file in `uploads/{item_id}/` and inserted into `item_references` at `display_order=0`
-6. Results appear in the viewer immediately via WS push
+1. User selects source (existing ref or URL) and types a query
+2. `POST references.ai_generate&item_id=N` with `{ref_id, url, query}`
+3. PHP fetches file (disk or URL), base64-encodes, sends to Anthropic API
+4. Claude returns JSON array of `{name, content}` pairs
+5. Each saved as `.md` in `uploads/{item_id}/`, appended to display_order
+6. Results appear in viewer immediately via WS push
 
-**Key files:**
-- `lib/anthropic.php` — `call_anthropic($file_type, $content, $query)` → array of `{name, content}` or null
-- `model/references/do_ai_generate.php` — reads file, calls Claude, saves results
-- Model default: `claude-sonnet-4-6` (override via `anthropic_model` in settings)
-
-**Prompt strategy:** always instructs Claude to respond with a JSON array, even for single results.
-Falls back to treating the full response as one result if JSON parsing fails.
+Key files:
+- `lib/anthropic.php` — `call_anthropic()` and `fetch_url_content()`
+- `model/references/do_ai_generate.php` — orchestrates fetch → Claude → save
+- Default model: `claude-sonnet-4-6` (override via `anthropic_model` in settings.local.php)
 
 ---
 
@@ -161,8 +161,8 @@ Falls back to treating the full response as one result if JSON parsing fails.
 All tables use `UNSIGNED INT AUTO_INCREMENT` primary keys.
 
 ### FK cascade rules
-- `locations.parent_id → locations` RESTRICT (can't delete location with children)
-- `items.location_id → locations` RESTRICT (can't delete location with items)
+- `locations.parent_id → locations` RESTRICT
+- `items.location_id → locations` RESTRICT
 - `item_labels.item_id → items` CASCADE
 - `item_references.item_id → items` CASCADE
 - `app_state.current_location_id → locations` SET NULL
@@ -171,7 +171,6 @@ All tables use `UNSIGNED INT AUTO_INCREMENT` primary keys.
 ### `items`
 | column | type | notes |
 |--------|------|-------|
-| id | INT UNSIGNED AI PK | |
 | name | VARCHAR(255) | |
 | part_number | VARCHAR(100) NULL | |
 | description | TEXT NULL | |
@@ -179,28 +178,19 @@ All tables use `UNSIGNED INT AUTO_INCREMENT` primary keys.
 | quantity | INT UNSIGNED | |
 
 ### `item_labels`
-Multiple QR codes per item.
-
-| column | type |
-|--------|------|
-| item_id | INT UNSIGNED FK→items CASCADE |
-| qr_serial | VARCHAR(100) UNIQUE |
+Multiple QR codes per item. `qr_serial` UNIQUE.
 
 ### `locations`
-Hierarchical, unlimited depth.
-
-| column | type | notes |
-|--------|------|-------|
-| parent_id | INT UNSIGNED FK→self NULL | null = root |
-| qr_serial | VARCHAR(100) UNIQUE | one QR per location |
+Hierarchical. `parent_id` self-ref FK (null = root). `qr_serial` UNIQUE.
 
 ### `item_references`
-| column | type | notes |
-|--------|------|-------|
-| item_id | INT UNSIGNED FK→items CASCADE | |
-| file_type | ENUM('pdf','image','md') | |
-| file_path | VARCHAR(500) | relative to www/ |
-| display_order | INT | ascending; 0 shown first in viewer |
+| column | notes |
+|--------|-------|
+| file_type | ENUM('pdf','image','md') |
+| file_path | relative to www/ |
+| display_order | ascending; 0 shown first in viewer |
+
+Files stored in `www/uploads/{item_id}/`. AI-generated files named `ai_{timestamp}_{uniqid}.md`.
 
 ### `app_state`
 Single row (id=1).
@@ -211,17 +201,16 @@ Single row (id=1).
 | follow_mode | 1 = item scan updates current location |
 | last_scanned_qr | |
 | last_scanned_item_id | drives Qt viewer display |
+| updated_at | changes on every scan — used by viewer to detect new scans |
 
 ---
 
 ## API Endpoints
 
-All via Firebox routing. Clean URLs: `/things/controller.method`
-
 ### State
 | endpoint | description |
 |----------|-------------|
-| `GET state.get` | Returns app_state + current_location_name |
+| `GET state.get` | app_state + current_location_name + updated_at |
 | `POST state.toggle_follow` | Toggles follow_mode |
 
 ### Scanning
@@ -248,13 +237,20 @@ All via Firebox routing. Clean URLs: `/things/controller.method`
 | `GET locations.tree` | Flat list: `[{id, name, parent_id, qr_serial}]` |
 | `POST locations.create` | Body: name, parent_id, qr_serial |
 | `POST locations.update&id=N` | Body: name, parent_id |
+| `POST locations.delete&id=N` | Recursive subtree delete; items reassigned to parent |
+
+Location delete rules:
+- Has items + has parent → items move to parent, location deleted
+- Has children → entire subtree deleted; all items bubble up to parent
+- Root location with items in subtree → refused
 
 ### References
 | endpoint | description |
 |----------|-------------|
 | `POST references.upload&item_id=N` | Multipart: file + name |
-| `POST references.ai_generate&item_id=N` | Body: `{ref_id, query}` → array of new refs |
-| `POST references.update&id=N` | Body: name, display_order |
+| `POST references.reorder&item_id=N` | Body: `{id, direction: "up"\|"down"}` — swap + renumber all |
+| `POST references.ai_generate&item_id=N` | Body: `{ref_id\|url, query}` → array of new refs |
+| `POST references.update&id=N` | Body: name |
 | `POST references.delete_ref&id=N` | Deletes file + DB row |
 
 ### Viewer
@@ -266,15 +262,14 @@ All via Firebox routing. Clean URLs: `/things/controller.method`
 
 ## WebSocket Message Format
 
-Broadcast to all clients on any app_state change:
-
 ```json
 {
   "current_location_id": 2,
   "current_location_name": "Cabinet A",
   "follow_mode": false,
   "last_scanned_qr": "ABC123",
-  "last_scanned_item_id": 5
+  "last_scanned_item_id": 5,
+  "updated_at": "2026-05-10 21:00:00"
 }
 ```
 
@@ -293,7 +288,7 @@ location = /things/ws {
     proxy_read_timeout 86400;
 }
 
-location ~ \.php$ { ... }  # must come before things rewrites
+location ~ \.php$ { ... }  # before things rewrites
 
 location = /things/scanner { rewrite ^ /things/index.php?go=pwa.scanner last; }
 
@@ -308,32 +303,29 @@ location ~ ^/things/([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)/?$ {
 
 ### Scan → Quick Reference
 1. Scan item QR → `scan.process` updates app_state + calls `notify_ws()`
-2. WS server receives UDP, fetches state, broadcasts to all clients
-3. Qt viewer receives WS message, HTTP-fetches `/viewer.get`, goes full-screen
+2. WS server receives UDP, fetches state, broadcasts (including updated_at)
+3. Qt viewer detects updated_at change + non-zero item_id → fetches `/viewer.get` → full-screen
 
 ### Adjust Quantity
-1. Scan item on phone → tap +Stock or -Stock → enter amount
+Scan item on phone → tap +Stock or -Stock → enter amount.
 
 ### Move Item(s) to New Location
-1. Toggle follow **OFF**, scan destination location, scan item → tap "Move Here"
-2. Repeat for batch; toggle follow **ON** when done
+Toggle follow OFF → scan destination location → scan item → tap "Move Here". Repeat for batch.
 
 ### AI Extract from Datasheet
-1. Upload PDF datasheet as a reference on item detail page
-2. In AI Extract section: select source doc, type query (e.g. "pinout and register table")
-3. Click Extract — Claude creates one or more new markdown reference entries
-4. New entries appear in viewer immediately
+Item detail page → References → AI Extract section → pick source doc or paste URL → type query → Extract.
+Creates one or more markdown reference entries, shows immediately in viewer.
 
 ### Add New Item (unknown QR)
-1. Scan fresh QR → "Assign" button appears on phone
-2. Fill in name, part number, location → Create + Assign
+Scan fresh QR → "Assign" button on phone → fill in name, part, location → Create + Assign.
+
+### Open Management Website
+Tray icon → Open Management Website → embedded browser window (no chrome).
 
 ---
 
 ## Open Items
 
-- **Qt viewer E2E** — not run against live server since WS refactor
-- **AI Extract E2E** — API key confirmed; full PDF flow not tested
-- **HID scanner udev rule** — pending scanner being plugged in
 - **Bulk quantity entry** — deferred
+- **HID scanner udev rule** — pending scanner hardware identification
 - **Old git branches** — `api`, `webui` on origin; safe to delete
