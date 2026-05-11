@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network DBus Pdf PdfWidgets Svg WebSockets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network DBus Pdf PdfWidgets Svg WebSockets WebEngineWidgets)
 
 add_executable(things-viewer
     main.cpp
@@ -16,6 +16,7 @@ add_executable(things-viewer
     ItemPanel.cpp
     ErrorOverlay.cpp
     SettingsDialog.cpp
+    BrowserWindow.cpp
     resources.qrc
 )
 
@@ -28,6 +29,7 @@ target_link_libraries(things-viewer PRIVATE
     Qt6::PdfWidgets
     Qt6::Svg
     Qt6::WebSockets
+    Qt6::WebEngineWidgets
 )
 
 

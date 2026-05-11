@@ -13,8 +13,7 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QPen>
-#include <QDesktopServices>
-#include <QUrl>
+#include "BrowserWindow.h"
 #include <QDBusInterface>
 #include <QCoreApplication>
 
@@ -71,8 +70,10 @@ void MainWindow::setupTray()
     });
 
     auto *webAct = menu->addAction("Open Management Website");
-    connect(webAct, &QAction::triggered, this, []() {
-        QDesktopServices::openUrl(QUrl(Settings::serverUrl()));
+    connect(webAct, &QAction::triggered, this, [this]() {
+        if (!m_browser)
+            m_browser = new BrowserWindow(this);
+        m_browser->openUrl(Settings::serverUrl());
     });
 
     menu->addSeparator();

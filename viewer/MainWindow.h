@@ -7,6 +7,7 @@
 class DocViewer;
 class ItemPanel;
 class ErrorOverlay;
+class BrowserWindow;
 
 class MainWindow : public QWidget
 {
@@ -36,6 +37,7 @@ private:
     DocViewer          *m_docViewer;
     ItemPanel          *m_itemPanel;
     ErrorOverlay       *m_errorOverlay;
+    BrowserWindow      *m_browser = nullptr;
     QSystemTrayIcon    *m_tray;
     QAction            *m_muteAction;
 
