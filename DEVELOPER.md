@@ -6,83 +6,112 @@
 1. **Inventory management** — location and quantity tracking for a single-user electronics lab
 2. **Quick reference** — full-screen display of datasheets/pinouts triggered by QR scan
 
-All state is centralized in the PHP/MySQL backend. All other components (phone PWA, Qt viewer, HID scanner relay) are thin clients that read/write through the API.
+All state lives in the PHP/MySQL backend. All other components are thin clients.
 
 ---
 
 ## Architecture
 
 ```
-[Wireless HID Scanner] ──keystroke──> [Qt Tray App]
-                                            │
-                          ┌─────── POST /api/scan ───────┐
-                          │                               │
-[Phone PWA] ──────────> [PHP/MySQL API] <──────────── [Web UI]
-                          │
-                    GET /api/viewer
-                          │
-                    [Qt Viewer Display]
+[HID Scanner] ──keystroke──> [Qt Viewer]
+                                  │
+                         POST /things/scan.process
+                                  │
+[Phone PWA] ─── HTTP ──> [PHP/MySQL API] <── HTTP ── [Web UI]
+                                  │
+                         notify_ws() UDP :8766
+                                  │
+                         [C++ WebSocket Server] ──WS push──> all clients
+                                  │
+                         GET /things/state.get (polls API, 10s fallback)
 ```
 
-- The API is the only component that touches the database
-- Qt app is stateless — it polls the API and forwards scanner input
-- Phone PWA and Web UI are both browser-based; PWA is mobile-optimized with camera
+- The PHP API is the only component that writes to the database
+- WebSocket server has no direct DB access — it polls the API
+- Qt viewer connects to WS for state changes, then HTTP-fetches `/viewer.get` for full item data
+- PHP models call `notify_ws()` after any `app_state` mutation, sending a UDP datagram to port 8766
+
+---
+
+## Directory Layout
+
+```
+things/
+├── www/          PHP web app (Firebox MVC) — rsynced to server
+├── viewer/       Qt6 desktop viewer — built locally, run locally
+├── wsserver/     Qt6 WebSocket server — built locally, binary deployed to server
+├── schema.sql    Initial DB schema — run once
+└── deploy.sh     Rsync www/ to server + restart wsserver service
+```
 
 ---
 
 ## Components
 
-### PHP/MySQL Backend (Firebox framework)
-- Framework: Firebox MVC at `/home/afabian/firebox`
-- All business logic lives here
-- API layer (controllers + models) is fully unit-testable with no UI dependency
-- Presentation layer (views) cannot bypass the API to touch DB directly
+### PHP/MySQL Backend (`www/`)
 
-### Web UI
-- Browser-based inventory management: items, locations, reference files
-- Not designed for mobile or distance viewing
-- Used for setup tasks: creating items/locations, uploading reference docs, re-parenting locations
+Firebox MVC framework. Routing: `?go=controller.method` or clean URL `/things/controller.method`.
 
-### Phone PWA
-- Served by the PHP backend, runs in a mobile browser
-- Layout: top half = live camera view; bottom half = action buttons
-- Buttons send `POST /api/scan` with `{ qr_serial, action }` and display response text
-- Actions: (default), Add Stock, Remove Stock, Move Here, Assign QR
-- Follow mode toggle is prominent
-- Displays current location and follow mode state at all times
+**Critical Firebox rules:**
+- Closing `}` must be at column 0 in all controller/model/lib files (compiler block detection)
+- Views must be pure HTML (no inline PHP content) — all JS in external `.js` files
+- `api_exit($data, $code)` calls `exit` — `post()` is always empty in API controllers
+- `api_input()` returns `array_merge($_GET, $parsed_json_body)`
+- Lib files in `lib/` are auto-injected into every compiled file
+- Run `rm -f /var/www/html/things/parsed/dev/*.php` after Firebox changes to clear cache
 
-### Qt Desktop Viewer
-- Runs as a tray icon; goes full-screen when the API signals a new item scan
-- Polls `GET /api/viewer` on a short interval (~500ms)
-- Forwards HID scanner keystrokes to `POST /api/scan`
-- Full-screen layout: two columns
-  - Left (~70%): reference document display (image, PDF, or rendered markdown)
-  - Right (~30%): item name, part number, quantity, location path
-  - Shows top-priority reference document (lowest `display_order`)
-- Wakes the display when entering presentation mode (see below)
-- Minimizes/hides when user closes full-screen (does not exit — stays in tray)
-- Exits cleanly from tray icon menu
-- Multiple instances supported; all display the same state
+**Lib utilities:**
+- `api_exit.php` — JSON response + exit
+- `api_input.php` — merges GET params with JSON body
+- `db_esc.php` — `mysqli_real_escape_string` wrapper (requires connection established first)
+- `location_path.php` — recursive CTE, returns path array from root to leaf
+- `notify_ws.php` — sends UDP datagram to WS server notify port
 
-#### Display Wake on Presentation (Qt)
-When entering full-screen presentation mode, the Qt app must wake the display if it is asleep.
+### WebSocket Server (`wsserver/`)
 
-- Environment: GNOME on Wayland
-- Use `QDBusInterface` to call `org.gnome.ScreenSaver.SetActive(false)` on the session bus
-- Interface: `org.gnome.ScreenSaver`, path: `/org/gnome/ScreenSaver`
-- No subprocess needed; requires `QT += dbus` in the Qt project file
+C++/Qt6. Polls `GET /things/state.get` every 10s as a fallback; also listens on UDP port 8766 for immediate push notifications from PHP. Broadcasts app_state JSON to all connected WebSocket clients on change.
 
-#### HID Scanner Input (Qt)
-- Wireless QR scanners act as HID keyboards: output barcode text + Enter
-- Qt app captures this input via a global keyboard hook or a focused hidden input window
-- Parsed QR serial is forwarded to `POST /api/scan` immediately
-- Exact capture mechanism TBD (Linux: XInput/evdev; evaluate options during implementation)
+Ports:
+- **8765** — WebSocket (nginx proxies `ws://server/things/ws` here)
+- **8766** — UDP notify (PHP → server, localhost only)
+
+Service: `things-ws.service` managed by systemd. Binary at `/var/www/html/things/wsserver/things-ws`.
+
+First-time install: `bash /var/www/html/things/wsserver/setup-service.sh`
+
+Deploy update: `rsync -a wsserver/build/things-ws 10.0.0.10:/var/www/html/things/wsserver/ && ssh 10.0.0.10 "sudo systemctl restart things-ws"`
+
+### Qt Desktop Viewer (`viewer/`)
+
+Tray application. Full-screen on item scan, hidden otherwise.
+
+- Connects to `ws://[server]/things/ws` for state push
+- On `last_scanned_item_id` change → HTTP-fetches `/viewer.get` for item + reference data
+- Reconnects every 3s on WS disconnect; reports server down after 2s disconnected
+- Full-screen layout: DocViewer (70% left) + ItemPanel (30% right)
+- DocViewer renders: PDF (QPdfView), images (QLabel), markdown (QTextBrowser)
+- HID scanner: reads evdev device directly, exclusive grab via `EVIOCGRAB`; configure device in Settings
+- Display wake: D-Bus `org.gnome.ScreenSaver.SetActive(false)` on each new scan
+- Mute: suppresses auto-show; tray icon grays out
+- Error overlay: red banner when WS disconnected; `ErrorOverlay` class is reusable
+- Settings persist via QSettings; apply instantly (no Apply button)
+
+Build: `cd viewer && make`
+Run: `make run`
 
 ---
 
 ## Database Schema
 
 All tables use `UNSIGNED INT AUTO_INCREMENT` primary keys.
+
+### FK cascade rules
+- `locations.parent_id → locations` RESTRICT (can't delete location with children)
+- `items.location_id → locations` RESTRICT (can't delete location with items)
+- `item_labels.item_id → items` CASCADE (labels deleted with item)
+- `item_references.item_id → items` CASCADE (refs deleted with item)
+- `app_state.current_location_id → locations` SET NULL
+- `app_state.last_scanned_item_id → items` SET NULL
 
 ### `items`
 | column | type | notes |
@@ -91,23 +120,22 @@ All tables use `UNSIGNED INT AUTO_INCREMENT` primary keys.
 | name | VARCHAR(255) | |
 | part_number | VARCHAR(100) NULL | |
 | description | TEXT NULL | |
-| location_id | INT UNSIGNED FK→locations | current storage location |
-| quantity | INT UNSIGNED | total in stock |
-| created_at | TIMESTAMP | |
-| updated_at | TIMESTAMP | |
+| location_id | INT UNSIGNED FK | current storage location |
+| quantity | INT UNSIGNED | |
+| created_at / updated_at | TIMESTAMP | |
 
 ### `item_labels`
-Multiple QR codes can map to one item (e.g., label on bin + label on reel).
+Multiple QR codes per item (bin label + reel label etc.).
 
-| column | type | notes |
-|--------|------|-------|
-| id | INT UNSIGNED AI PK | |
-| item_id | INT UNSIGNED FK→items | |
-| qr_serial | VARCHAR(100) UNIQUE | serial from pre-printed roll |
-| created_at | TIMESTAMP | |
+| column | type |
+|--------|------|
+| id | INT UNSIGNED AI PK |
+| item_id | INT UNSIGNED FK→items CASCADE |
+| qr_serial | VARCHAR(100) UNIQUE |
+| created_at | TIMESTAMP |
 
 ### `locations`
-Hierarchical — unlimited depth. Moving a location moves all children and their items implicitly (via parent_id traversal).
+Hierarchical, unlimited depth.
 
 | column | type | notes |
 |--------|------|-------|
@@ -115,164 +143,151 @@ Hierarchical — unlimited depth. Moving a location moves all children and their
 | name | VARCHAR(255) | |
 | parent_id | INT UNSIGNED FK→self NULL | null = root |
 | qr_serial | VARCHAR(100) UNIQUE | one QR per location |
-| created_at | TIMESTAMP | |
-| updated_at | TIMESTAMP | |
+| created_at / updated_at | TIMESTAMP | |
 
 ### `item_references`
-Reference documents attached to items. Displayed in `display_order` order; lowest = highest priority.
-
 | column | type | notes |
 |--------|------|-------|
 | id | INT UNSIGNED AI PK | |
-| item_id | INT UNSIGNED FK→items | |
+| item_id | INT UNSIGNED FK→items CASCADE | |
 | name | VARCHAR(255) | display label |
 | file_type | ENUM('pdf','image','md') | |
-| file_path | VARCHAR(500) | path on server |
-| display_order | INT | ascending; 0 = show first |
+| file_path | VARCHAR(500) | relative to web root |
+| display_order | INT | ascending; 0 shown first |
 | created_at | TIMESTAMP | |
 
 ### `app_state`
-Single row (id=1). Global shared state across all clients.
+Single row (id=1).
 
 | column | type | notes |
 |--------|------|-------|
-| id | INT UNSIGNED AI PK | always 1 |
-| current_location_id | INT UNSIGNED FK→locations NULL | active working location |
+| current_location_id | INT FK NULL | active working location |
 | follow_mode | TINYINT(1) | 1 = item scan updates current location |
-| last_scanned_qr | VARCHAR(100) NULL | most recent QR serial seen |
-| last_scanned_item_id | INT UNSIGNED FK→items NULL | drives viewer display |
+| last_scanned_qr | VARCHAR(100) NULL | |
+| last_scanned_item_id | INT FK NULL | drives Qt viewer |
 | updated_at | TIMESTAMP | |
-
----
-
-## Global Application State
-
-| field | behavior |
-|-------|----------|
-| `current_location` | Updated when: location QR scanned; item QR scanned (if follow ON) |
-| `follow_mode` | ON: scanning item updates current location to item's location. OFF: current location is locked — enables move workflow |
-| `last_scanned_item_id` | Updated on every item scan; drives Qt viewer display |
 
 ---
 
 ## API Endpoints
 
-Base path: `/api`
+All via Firebox routing. Clean URLs: `/things/controller.method`
 
 ### State
-| method | path | description |
-|--------|------|-------------|
-| GET | `/state` | Returns full app_state row |
-| PUT | `/state/follow` | Toggle follow_mode |
+| endpoint | description |
+|----------|-------------|
+| `GET state.get` | Returns app_state + current_location_name |
+| `POST state.toggle_follow` | Toggles follow_mode |
 
-### Scanning (core action)
-| method | path | description |
-|--------|------|-------------|
-| POST | `/scan` | Process a QR scan. Body: `{ qr_serial, action? }`. Returns entity info or `{ status: "unknown", qr_serial }` if not found. Updates app_state. |
-
-Actions passed with `/scan`:
-- *(none)* — lookup only, update state
-- `add_stock` — prompt for quantity delta/total
-- `remove_stock` — prompt for quantity delta/total
-- `move_here` — move item to current_location (follow must be OFF)
-- `assign` — assign unknown QR to item or location (triggers form)
+### Scanning
+| endpoint | description |
+|----------|-------------|
+| `POST scan.process` | Body: `{qr_serial}`. Updates app_state. Returns type=item/location/unknown |
 
 ### Items
-| method | path | description |
-|--------|------|-------------|
-| GET | `/items` | List/search items. Params: `q`, `location_id` |
-| POST | `/items` | Create item |
-| GET | `/items/{id}` | Item detail + location path + labels |
-| PUT | `/items/{id}` | Update item fields |
-| POST | `/items/{id}/quantity` | Adjust quantity. Body: `{ mode: "total"|"delta", value: int }` |
-| POST | `/items/{id}/move` | Move item to current_location |
-| POST | `/items/{id}/labels` | Assign a QR serial to this item |
-| DELETE | `/items/{id}/labels/{label_id}` | Remove a QR label |
+| endpoint | description |
+|----------|-------------|
+| `GET items.list_items` | Params: `q`, `location_id` |
+| `POST items.create` | Body: name, part_number, description, quantity, location_id |
+| `GET items.detail&id=N` | Returns item + location_path + labels + references |
+| `POST items.update&id=N` | Body: name, part_number, description, location_id |
+| `POST items.adjust_quantity&id=N` | Body: `{mode: "total"\|"delta", value: int}` |
+| `POST items.move&id=N` | Moves item to current_location_id |
+| `POST items.add_label&id=N` | Body: `{qr_serial}` |
+| `POST items.delete_label&label_id=N` | Removes label |
+| `POST items.delete&id=N` | Deletes item + labels + refs + upload directory |
 
 ### Locations
-| method | path | description |
-|--------|------|-------------|
-| GET | `/locations` | Full location tree |
-| POST | `/locations` | Create location |
-| GET | `/locations/{id}` | Location detail + children + items |
-| PUT | `/locations/{id}` | Update name or re-parent (parent_id) |
+| endpoint | description |
+|----------|-------------|
+| `GET locations.tree` | Flat list: `[{id, name, parent_id, qr_serial}]` |
+| `POST locations.create` | Body: name, parent_id, qr_serial |
+| `POST locations.update&id=N` | Body: name, parent_id |
 
 ### References
-| method | path | description |
-|--------|------|-------------|
-| GET | `/items/{id}/references` | List reference docs for item |
-| POST | `/items/{id}/references` | Upload reference file |
-| PUT | `/references/{id}` | Update name or display_order |
-| DELETE | `/references/{id}` | Remove reference |
+| endpoint | description |
+|----------|-------------|
+| `POST references.upload&item_id=N` | Multipart: file + name |
+| `POST references.update&id=N` | Body: name, display_order |
+| `POST references.delete_ref&id=N` | Deletes file from disk + DB row |
 
 ### Viewer
-| method | path | description |
-|--------|------|-------------|
-| GET | `/viewer` | Returns current display payload: item details + top reference file content/URL |
+| endpoint | description |
+|----------|-------------|
+| `GET viewer.get` | Returns `{item, reference}` for current last_scanned_item_id |
+
+---
+
+## WebSocket Message Format
+
+Sent by wsserver to all connected clients on any app_state change:
+
+```json
+{
+  "current_location_id": 2,
+  "current_location_name": "Cabinet A",
+  "follow_mode": false,
+  "last_scanned_qr": "ABC123",
+  "last_scanned_item_id": 5
+}
+```
+
+---
+
+## Nginx Config (on server)
+
+Key additions to `/etc/nginx/sites-enabled/default`:
+
+```nginx
+# WebSocket proxy — must be before PHP location
+location = /things/ws {
+    proxy_pass http://127.0.0.1:8765;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 86400;
+}
+
+# PHP — before things rewrite to prevent loop
+location ~ \.php$ { ... }
+
+# Clean URL routing
+location = /things/scanner { rewrite ^ /things/index.php?go=pwa.scanner last; }
+location ~ ^/things/([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)/?$ {
+    rewrite ^/things/([a-zA-Z0-9_.]+)/?$ /things/index.php?go=$1 last;
+}
+```
 
 ---
 
 ## User Workflows
 
-### Quick Reference Lookup
-1. Scan item QR (scanner or phone)
-2. API updates `last_scanned_item_id` (and `current_location` if follow ON)
-3. Qt viewer polls `/api/viewer`, goes full-screen, shows reference doc + item details
+### Scan → Quick Reference
+1. Scan item QR (HID scanner or phone)
+2. `scan.process` updates `last_scanned_item_id`, calls `notify_ws()`
+3. WS server receives UDP, fetches state, broadcasts to all clients
+4. Qt viewer receives WS message, HTTP-fetches `/viewer.get`, goes full-screen
+5. Web UI and PWA state bars update instantly via WS push
 
 ### Adjust Quantity
-1. Scan item QR → phone app shows item
-2. Use +/- buttons, or type total quantity, or type signed delta
-3. POST to `/items/{id}/quantity`
+1. Scan item QR on phone → item shown in PWA
+2. Tap +Stock or -Stock → enter amount → OK
 
 ### Move Item(s) to New Location
-1. Toggle follow **OFF** on phone app
+1. Toggle follow **OFF** on phone
 2. Scan destination location QR → current_location updates
-3. Scan item QR → phone app offers "Move Here" button
-4. Repeat step 3 for additional items (batch)
-5. Toggle follow **ON** when done
+3. Scan item QR → tap "Move Here"
+4. Repeat for batch moves; toggle follow **ON** when done
 
 ### Add New Item (unknown QR)
-1. Scan a fresh QR from the roll
-2. API returns `{ status: "unknown" }`
-3. Phone/web shows tabbed form; "Item" tab auto-focused
-4. Fill in name, part number, description; quantity defaults to 0; location defaults to current_location
-5. Submit → item created, QR assigned via `item_labels`
-
-### Add New Location (unknown QR)
-1. Scan a fresh QR from the roll
-2. Same tabbed form; switch to "Location" tab
-3. Fill in name; parent defaults to current_location
-4. Submit → location created, QR assigned
-
-### Move Location in Hierarchy
-1. Web UI only
-2. Select location, change parent_id
-3. All children and their items implicitly follow (no data migration needed — hierarchy is parent_id traversal)
-
-### Assign Additional QR to Existing Item
-1. Scan unknown QR
-2. In form, select "Item" tab → choose "assign to existing" → search and select item
-3. QR added to `item_labels`
+1. Scan fresh QR from roll → "Assign" button appears on phone
+2. Fill in name, part number, location → Create + Assign
 
 ---
 
-## Implementation Order
+## Open Items
 
-1. DB schema + migrations
-2. Core API: `/scan`, `/state`, `/items` CRUD, `/locations` CRUD
-3. Web UI: item and location management, reference file upload
-4. Phone PWA: camera view, action buttons, follow toggle
-5. Qt tray app: viewer display, API polling
-6. Qt HID scanner input capture
-7. Reference file rendering (PDF viewer, image display, markdown render)
-8. Polish: search, location tree UI, batch operations
-
----
-
-## Open Design Items
-
-- Qt display wake: resolved — GNOME/Wayland via `QDBusInterface` `org.gnome.ScreenSaver.SetActive(false)`
-- Qt HID input capture mechanism on Linux (XInput vs. evdev vs. focused window)
-- PDF rendering in Qt (Qt PDF module vs. embedded viewer)
-- Markdown rendering in Qt (QTextBrowser supports basic HTML — convert md→html server-side or in-client)
-- Authentication: single-user system, but should API be protected if server is LAN-only?
+- **Bulk quantity entry** — inline qty editing in items list (deferred)
+- **Location tree web UI improvements** — reorder, visual nesting (future)
+- **Websocket: Qt viewer state bar** — viewer shows item but not follow/location in the panel; could display it
+- **Authentication** — currently none; LAN-only single-user, revisit if needed

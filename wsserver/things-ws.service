@@ -1,0 +1,15 @@
+[Unit]
+Description=Things WebSocket State Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+ExecStart=/var/www/html/things/wsserver/things-ws
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

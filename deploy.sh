@@ -5,13 +5,10 @@ DEST=/var/www/html/things
 
 echo "Deploying to $SERVER:$DEST ..."
 rsync -a --delete \
-    --exclude='.git/' \
     --exclude='parsed/' \
     --exclude='uploads/' \
     --exclude='*.md' \
-    --exclude='deploy.sh' \
-    --exclude='claude_notes.md' \
-    /home/afabian/things/ \
+    /home/afabian/things/www/ \
     $SERVER:$DEST/
 
 echo "Setting up server directories ..."

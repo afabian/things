@@ -2,96 +2,154 @@
 
 ## Project Status
 
-**Phase: Design complete, not yet started.**
-Waiting on Firebox MVC framework (in progress by separate Claude instance at `/home/afabian/firebox`).
-When Firebox is ready, begin with DB schema and API layer.
+**Phase: Feature-complete MVP. All major components built and deployed.**
 
-## Key Facts
+Done: DB schema, Core API, Web UI, Phone PWA, nginx clean URLs, Qt viewer, WebSocket server, Delete item.
+Deferred: Bulk quantity entry.
 
-- Single user (Andy), single-person electronics lab
-- Server: 10.0.0.10, SSH passwordless, PHP/MySQL
-- Framework: Firebox at `/home/afabian/firebox` — use for web backend and PWA
-- Qt app: C++/Qt, tray icon, full-screen viewer, HID scanner relay
-- QR codes: pre-printed rolls with unique serials — never print our own
-- No auth required (LAN only, single user) — revisit if needed
+---
 
-## Database Tables
+## Directory Layout
 
-- `items` — name, part_number, description, location_id, quantity
-- `item_labels` — maps qr_serial → item_id (multiple per item)
-- `locations` — name, parent_id (self-ref, null=root), qr_serial (one per location)
-- `item_references` — name, file_type(pdf/image/md), file_path, display_order per item
-- `app_state` — single row: current_location_id, follow_mode, last_scanned_qr, last_scanned_item_id
+```
+things/
+├── www/          PHP web app (Firebox MVC) — rsynced to server
+├── viewer/       Qt6 desktop viewer — built/run locally
+├── wsserver/     Qt6 WebSocket server — built locally, binary deployed
+├── schema.sql    Run once against DB
+└── deploy.sh     Rsync www/ + restart wsserver service
+```
 
-All PKs: UNSIGNED INT AUTO_INCREMENT.
+---
 
-## Global State (app_state row)
+## Key Technical Facts
 
-| field | behavior |
-|-------|----------|
-| current_location_id | Updated by: location scan always; item scan if follow_mode=1 |
-| follow_mode | 0=locked (enables move workflow), 1=follows item scans |
-| last_scanned_item_id | Updated every item scan — drives Qt viewer |
+- Server: 10.0.0.10, SSH passwordless, nginx, PHP 8.3, MySQL
+- Framework: Firebox MVC at `/home/afabian/firebox`
+- Firebox closing `}` must be at column 0 (compiler bug)
+- Views must be pure HTML, no inline PHP, no inline JS
+- `api_exit()` calls exit — post() always empty in API controllers
+- `api_input()` returns merge of `$_GET` and JSON body
+- Lib files in `lib/` are auto-injected by Firebox
+- Clear parsed cache: `rm -f /var/www/html/things/parsed/dev/*.php`
 
-## Core Scan Logic (POST /api/scan)
+---
 
-1. Look up qr_serial in item_labels → found = item
-2. Look up qr_serial in locations.qr_serial → found = location
-3. Neither → return { status: "unknown", qr_serial } → client shows assignment form
-4. On item scan: update last_scanned_item_id; if follow_mode=1, update current_location_id to item's location_id
-5. On location scan: update current_location_id
+## WebSocket Architecture
 
-## Phone PWA Layout
+```
+PHP model → notify_ws() → UDP :8766 → StateServer
+                                           ↓
+                              GET /things/state.get  (also 10s fallback poll)
+                                           ↓
+                              broadcast JSON to WS clients on change
+                                           ↓
+               ┌─────────────────────────────────────────────┐
+               │                         │                    │
+          Qt viewer                  Web UI              Phone PWA
+     (fetches /viewer.get          (state bar            (state bar
+      on item_id change)            updates)              updates)
+```
 
-- Top half: live camera view (Web camera API)
-- Bottom half: action buttons + current location + follow mode toggle
-- Buttons: default scan, +Stock, -Stock, Move Here, Assign QR
-- Response text displayed after each action
-- Follow toggle prominent — changes behavior significantly
+WS server ports: **8765** (WebSocket), **8766** (UDP notify, localhost only)
+Nginx proxies `ws://server/things/ws` → localhost:8765
+PHP `notify_ws()` in: do_process_scan, do_toggle_follow, do_move_item
 
-## Qt Viewer
+---
 
-- Tray app, goes full-screen on item scan
-- Polls GET /api/viewer ~500ms
-- Two-column full-screen layout:
-  - Left ~70%: top-priority reference doc (lowest display_order) — image/PDF/md
-  - Right ~30%: item name, part number, quantity, location path
-- Also forwards HID scanner keystrokes → POST /api/scan
-- HID capture mechanism on Linux: TBD (XInput, evdev, or focused input window)
-- Multiple instances OK — all show same state
-- On entering presentation mode: wake display if asleep
-  - GNOME/Wayland: `QDBusInterface` → `org.gnome.ScreenSaver` / `/org/gnome/ScreenSaver` → `SetActive(false)`
-  - Requires `QT += dbus` in .pro file
+## API Endpoints (clean URL format)
 
-## Unrecognized QR Flow
+- `GET state.get` — app_state + location name
+- `POST state.toggle_follow` — toggle follow mode
+- `POST scan.process` — body: {qr_serial} → type/item/location/unknown
+- `GET items.list_items` — q, location_id params
+- `POST items.create` / `GET items.detail&id=N` / `POST items.update&id=N`
+- `POST items.adjust_quantity&id=N` — body: {mode: total|delta, value}
+- `POST items.move&id=N` — move to current_location_id
+- `POST items.add_label&id=N` / `POST items.delete_label&label_id=N`
+- `POST items.delete&id=N` — deletes DB row + upload dir
+- `GET locations.tree` / `POST locations.create` / `POST locations.update&id=N`
+- `POST references.upload&item_id=N` / `POST references.update&id=N` / `POST references.delete_ref&id=N`
+- `GET viewer.get` — {item, reference} for current last_scanned_item_id
 
-- API returns { status: "unknown", qr_serial }
-- Client shows tabbed form: [Item] [Location]
-- Item tab: name, part_number, description, quantity (default 0), location (default current_location)
-- Location tab: name, parent (default current_location)
-- On submit: create record + insert into item_labels or set locations.qr_serial
+---
 
-## Move Item Workflow
+## viewer.get Response
 
-Follow must be OFF for this:
-1. Scan destination location → current_location updates
-2. Scan item → "Move Here" button appears on phone
-3. POST /items/{id}/move → sets item.location_id = current_location_id
-4. Repeat for batch moves
+```json
+{
+  "item": {
+    "id": 1, "name": "STM32F103", "part_number": "STM32F103C8T6",
+    "quantity": 5, "location_id": 3,
+    "location_path": [{"id":1,"name":"Lab"},{"id":3,"name":"Drawer A"}]
+  },
+  "reference": {
+    "id": 1, "name": "Datasheet", "file_type": "pdf",
+    "url": "http://10.0.0.10/things/uploads/1/datasheet.pdf"
+  }
+}
+```
 
-## Implementation Order
+---
 
-1. DB schema + seed
-2. API: /scan, /state, /items CRUD, /locations CRUD, /references CRUD, /viewer
-3. Web UI (Firebox views)
-4. Phone PWA
-5. Qt tray + viewer
-6. Qt HID scanner input
-7. PDF/image/markdown rendering in Qt
+## Qt Viewer Details
 
-## Open Questions
+- `ApiPoller`: WS connection to `ws://[server]/things/ws`
+  - First WS message: silently initialize (no startup pop-up)
+  - On `last_scanned_item_id` change: HTTP-fetch `/viewer.get`, emit `stateChanged`
+  - Server down: 2s grace, then `serverReachabilityChanged(false)`
+  - Reconnect: every 3s on disconnect
+- `DocViewer`: QStackedWidget — QPdfView / QLabel / QTextBrowser
+  - PDF: write to QTemporaryFile, load via QPdfDocument (Qt 6.2 — no QIODevice overload)
+  - QPdfDocument::load() returns `DocumentError` (not `Status`) in Qt 6.2
+- `ErrorOverlay`: floating dark-red banner, reusable via `showMessage()`/`hideMessage()`
+- `ScannerInput`: evdev direct read, EVIOCGRAB exclusive, emits `barcodeScanned`
+- HID setup: `sudo usermod -aG input $USER`, then configure device in Settings
+- Mute: tray icon grays out, auto-show suppressed; double-click tray = show/hide
 
-- Qt HID input on Linux: XInput vs evdev vs focused window — decide during Qt implementation
-- PDF rendering in Qt: Qt PDF module (Qt 6.4+) is cleanest option
-- Markdown in Qt: render md→HTML server-side, display in QTextBrowser or QWebEngineView
-- API auth: probably skip for now (LAN only, single user)
+---
+
+## wsserver Details
+
+- `StateServer`: QWebSocketServer + QUdpSocket
+- Polls `GET /things/state.get` every 10s (fallback)
+- On UDP datagram on :8766: immediately fetch + broadcast if changed
+- Sends current state to new WS clients on connect
+- Service: `/etc/systemd/system/things-ws.service` running as www-data
+- First-time setup: `bash /var/www/html/things/wsserver/setup-service.sh`
+- Redeploy: `rsync build/things-ws ... && ssh ... sudo systemctl restart things-ws`
+
+---
+
+## Open Items
+
+- **Bulk quantity entry** — inline qty editing in items list (deferred by Andy)
+- **Qt viewer E2E test** — haven't run `make run` against live server post-WS refactor
+- **Location tree UI** — no reorder/visual nesting yet
+- **Item search** — basic text search exists; no filtering by location tree
+- **Authentication** — none, LAN-only single user
+
+---
+
+## Build Commands
+
+```bash
+# Web
+bash deploy.sh
+
+# Qt viewer
+cd viewer && make        # build
+make run                 # build + run
+
+# WS server
+cd wsserver && make      # build
+# deploy: rsync build/things-ws to server, restart service
+```
+
+---
+
+## DB Connection Info
+
+- Host: localhost (server-side)
+- DB: things / User: things / Pass: things
+- Admin: things_admin / things_admin (for schema changes)

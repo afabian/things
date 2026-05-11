@@ -1,4 +1,5 @@
-parsed/dev/
-parsed/prod/
-parsed/production
-uploads/
+www/parsed/dev/
+www/parsed/prod/
+www/parsed/production
+www/uploads/
+viewer/build/

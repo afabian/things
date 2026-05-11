@@ -41,6 +41,11 @@ My name is Andy.  There are the rules and preferences I have for Claude or any o
 - For large tasks you can make a branch, switch to it, and then commit checkpoints automatically.  On branches, auto-committing is fine.  On master, only commit work I have verified is correct.  When the task is finished and I have approved it, merge the branch back to master.
 - Commit descriptions should be brief and information-dense.
 
+## Code Style
+
+- Use vertical whitespace generously to separate logical ideas.  Blank lines between every function and method.  Blank lines before and after section comments.  Each vertically grouped block of code should represent a single concept or "thought" — if two lines aren't part of the same idea, put a blank line between them.
+- This vertical spacing rule applies to all languages (C++, PHP, JS, etc.) and overrides any tendency to pack short lines together.
+
 ## Refactoring
 
 - CODE MUST STAY ORGANIZED!  This is the most important rule.  We will frequently stop to consider if our project needs to be refactored to keep it organized.  When changing code, always think about if the change fits within the current block design, or if the change is best implemented by refactoring the block-level design first.  I will often ask you about the state of a project - if it needs cleanup or refactoring or documentation to be ready for a code review.  Also consider this on your own.  Suggest these tasks whenever code is getting disorganized, very long, or lacks high-level documentation.

@@ -1,0 +1,8 @@
+/home/afabian/things/wsserver/build/CMakeFiles/things-ws.dir
+/home/afabian/things/wsserver/build/CMakeFiles/edit_cache.dir
+/home/afabian/things/wsserver/build/CMakeFiles/rebuild_cache.dir
+/home/afabian/things/wsserver/build/CMakeFiles/list_install_components.dir
+/home/afabian/things/wsserver/build/CMakeFiles/install.dir
+/home/afabian/things/wsserver/build/CMakeFiles/install/local.dir
+/home/afabian/things/wsserver/build/CMakeFiles/install/strip.dir
+/home/afabian/things/wsserver/build/CMakeFiles/things-ws_autogen.dir
