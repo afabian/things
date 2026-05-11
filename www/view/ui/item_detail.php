@@ -57,6 +57,10 @@
             <select id="ai-ref-id" style="width:220px"></select>
         </div>
         <div class="row">
+            <span class="lbl">— or URL</span>
+            <input type="text" id="ai-url" style="width:300px" placeholder="https://...">
+        </div>
+        <div class="row">
             <span class="lbl">Query</span>
             <input type="text" id="ai-query" style="width:300px"
                 placeholder="e.g. pinout and register table">

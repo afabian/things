@@ -160,10 +160,11 @@ function deleteRef(refId) {
 }
 
 function aiExtract() {
-    var refId = parseInt($('#ai-ref-id').val());
+    var refId = parseInt($('#ai-ref-id').val()) || 0;
+    var url   = $('#ai-url').val().trim();
     var query = $('#ai-query').val().trim();
-    if (!refId) { showMsg('Select a source document', false); return; }
-    if (!query) { showMsg('Enter a query', false); return; }
+    if (!refId && !url) { showMsg('Select a source document or enter a URL', false); return; }
+    if (!query)         { showMsg('Enter a query', false); return; }
 
     $('#ai-status').text('Thinking...');
     $('button').prop('disabled', true);
@@ -172,13 +173,14 @@ function aiExtract() {
         url: '?go=references.ai_generate&item_id=' + ITEM_ID,
         method: 'POST',
         contentType: 'application/json',
-        data: JSON.stringify({ref_id: refId, query: query}),
+        data: JSON.stringify({ref_id: refId, url: url, query: query}),
         timeout: 180000,
         success: function(refs) {
             $('button').prop('disabled', false);
             $('#ai-status').text('');
             if (refs.error) { showMsg(refs.error, false); return; }
             $('#ai-query').val('');
+            $('#ai-url').val('');
             loadItem();
             showMsg('Created ' + refs.length + ' section' + (refs.length !== 1 ? 's' : ''), true);
         },

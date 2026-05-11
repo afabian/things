@@ -47,12 +47,13 @@ function ai_generate()
 {
 $item_id = (int)($input['item_id'] ?? 0);
 $ref_id  = (int)($input['ref_id'] ?? 0);
+$url     = trim($input['url'] ?? '');
 $query   = trim($input['query'] ?? '');
-if (!$item_id) api_exit(['error' => 'Missing item_id'], 400);
-if (!$ref_id)  api_exit(['error' => 'Missing ref_id'], 400);
-if (!$query)   api_exit(['error' => 'Missing query'], 400);
+if (!$item_id)       api_exit(['error' => 'Missing item_id'], 400);
+if (!$ref_id && !$url) api_exit(['error' => 'Missing ref_id or url'], 400);
+if (!$query)         api_exit(['error' => 'Missing query'], 400);
 set_time_limit(180);
-$results = action('do_ai_generate', $item_id, $ref_id, $query);
+$results = action('do_ai_generate', $item_id, $ref_id, $query, $url);
 if (isset($results['error'])) api_exit($results, 500);
 api_exit($results, 201);
 }

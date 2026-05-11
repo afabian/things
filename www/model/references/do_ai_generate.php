@@ -1,10 +1,17 @@
 <?php
 
-function do_ai_generate($item_id, $ref_id, $query)
+function do_ai_generate($item_id, $ref_id, $query, $url = '')
 {
 $item_id = (int)$item_id;
 $ref_id  = (int)$ref_id;
 
+if ($url)
+{
+list($file_type, $file_content) = fetch_url_content($url);
+if (!$file_content) return ['error' => 'Could not fetch URL'];
+}
+else
+{
 $ref = query('qry_get_reference', $ref_id);
 if (!$ref || (int)$ref['item_id'] !== $item_id) return ['error' => 'Reference not found'];
 
@@ -14,7 +21,10 @@ if (!file_exists($file_path)) return ['error' => 'Source file not found on disk'
 $file_content = file_get_contents($file_path);
 if ($file_content === false) return ['error' => 'Could not read source file'];
 
-$results = call_anthropic($ref['file_type'], $file_content, $query);
+$file_type = $ref['file_type'];
+}
+
+$results = call_anthropic($file_type, $file_content, $query);
 if ($results === null) return ['error' => 'AI request failed — check anthropic_api_key in settings.php'];
 
 $upload_dir = $GLOBALS['fbx']['site_root'] . 'uploads/' . $item_id . '/';

@@ -1,5 +1,35 @@
 <?php
 
+function fetch_url_content($url)
+{
+$ch = curl_init($url);
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_FOLLOWLOCATION => true,
+    CURLOPT_TIMEOUT        => 30,
+    CURLOPT_USERAGENT      => 'Mozilla/5.0',
+]);
+$content  = curl_exec($ch);
+$mime     = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+curl_close($ch);
+
+if (!$content) return [null, null];
+
+// Determine file_type from MIME or URL extension
+$mime = strtolower(strtok($mime ?: '', ';'));
+if ($mime === 'application/pdf')     $file_type = 'pdf';
+elseif (str_starts_with($mime, 'image/')) $file_type = 'image';
+else
+{
+$ext = strtolower(pathinfo(parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION));
+$map = ['pdf' => 'pdf', 'png' => 'image', 'jpg' => 'image',
+        'jpeg' => 'image', 'gif' => 'image', 'webp' => 'image', 'svg' => 'image'];
+$file_type = $map[$ext] ?? 'pdf'; // assume PDF if unknown
+}
+
+return [$file_type, $content];
+}
+
 function call_anthropic($file_type, $file_content, $query)
 {
 $api_key = $GLOBALS['fbx']['settings']['anthropic_api_key'] ?? '';
