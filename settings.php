@@ -2,7 +2,7 @@
 $fbx['settings'] = array(
     'name'                => 'Things',
     'password'            => 'things',
-    'default_action'      => 'home.index',
+    'default_action'      => 'ui.items',
     'development_plugins' => array('debug', 'profiler', 'queries', 'menu'),
     'production_plugins'  => array(),
     'pre'                 => array(),
