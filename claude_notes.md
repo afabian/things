@@ -2,36 +2,61 @@
 
 ## Project Status
 
-**Phase: Feature-complete MVP. All major components built and deployed.**
+**Phase: Feature-complete MVP. In testing.**
 
-Done: DB schema, Core API, Web UI, Phone PWA, nginx clean URLs, Qt viewer, WebSocket server, Delete item.
-Deferred: Bulk quantity entry.
+Done: DB schema, Core API, Web UI, Phone PWA, nginx clean URLs, Qt viewer, WebSocket server,
+delete item, AI Extract. Deferred: bulk quantity entry.
 
 ---
 
-## Directory Layout
+## Server Layout
+
+Everything runs on 10.0.0.10 from a single git clone at `~/things/`:
 
 ```
-things/
-├── www/          PHP web app (Firebox MVC) — rsynced to server
-├── viewer/       Qt6 desktop viewer — built/run locally
-├── wsserver/     Qt6 WebSocket server — built locally, binary deployed
-├── schema.sql    Run once against DB
-└── deploy.sh     Rsync www/ + restart wsserver service
+/home/afabian/things/        ← git clone (source of truth)
+  www/                       ← web app; /var/www/html/things symlinks here
+  viewer/build/things-viewer ← built on server, GNOME autostart
+  wsserver/build/things-ws   ← built on server, systemd service
+/var/www/html/things         → symlink to ~/things/www
+/etc/systemd/system/things-ws.service
+~/.config/autostart/things-viewer.desktop
 ```
+
+---
+
+## Deploy Workflow
+
+```bash
+bash deploy.sh       # git pull on server + rebuild wsserver + restart service
+```
+
+Web changes take effect immediately on pull (no build step).
+Viewer changes require manual rebuild: `ssh server "cd ~/things/viewer && cmake --build build"`
 
 ---
 
 ## Key Technical Facts
 
-- Server: 10.0.0.10, SSH passwordless, nginx, PHP 8.3, MySQL
-- Framework: Firebox MVC at `/home/afabian/firebox`
 - Firebox closing `}` must be at column 0 (compiler bug)
 - Views must be pure HTML, no inline PHP, no inline JS
 - `api_exit()` calls exit — post() always empty in API controllers
 - `api_input()` returns merge of `$_GET` and JSON body
 - Lib files in `lib/` are auto-injected by Firebox
-- Clear parsed cache: `rm -f /var/www/html/things/parsed/dev/*.php`
+- Clear parsed cache: `rm -f ~/things/www/parsed/dev/*.php`
+- `$GLOBALS['fbx']['site_root']` = path to `www/` directory (use for file paths)
+
+---
+
+## Secrets / Local Config
+
+`www/settings.local.php` — gitignored, loaded at end of settings.php.
+Put API keys and other secrets here. Never in settings.php itself.
+
+```php
+<?php
+$fbx['settings']['anthropic_api_key'] = 'sk-ant-...';
+```
 
 ---
 
@@ -40,7 +65,7 @@ things/
 ```
 PHP model → notify_ws() → UDP :8766 → StateServer
                                            ↓
-                              GET /things/state.get  (also 10s fallback poll)
+                              GET /things/state.get  (+ 10s fallback poll)
                                            ↓
                               broadcast JSON to WS clients on change
                                            ↓
@@ -60,17 +85,35 @@ PHP `notify_ws()` in: do_process_scan, do_toggle_follow, do_move_item
 ## API Endpoints (clean URL format)
 
 - `GET state.get` — app_state + location name
-- `POST state.toggle_follow` — toggle follow mode
+- `POST state.toggle_follow`
 - `POST scan.process` — body: {qr_serial} → type/item/location/unknown
 - `GET items.list_items` — q, location_id params
 - `POST items.create` / `GET items.detail&id=N` / `POST items.update&id=N`
 - `POST items.adjust_quantity&id=N` — body: {mode: total|delta, value}
-- `POST items.move&id=N` — move to current_location_id
+- `POST items.move&id=N`
 - `POST items.add_label&id=N` / `POST items.delete_label&label_id=N`
 - `POST items.delete&id=N` — deletes DB row + upload dir
 - `GET locations.tree` / `POST locations.create` / `POST locations.update&id=N`
-- `POST references.upload&item_id=N` / `POST references.update&id=N` / `POST references.delete_ref&id=N`
+- `POST references.upload&item_id=N`
+- `POST references.ai_generate&item_id=N` — body: {ref_id, query} → array of new refs
+- `POST references.update&id=N` / `POST references.delete_ref&id=N`
 - `GET viewer.get` — {item, reference} for current last_scanned_item_id
+
+---
+
+## AI Extract
+
+Flow: user picks a source reference (PDF or image) + types a query → POST to
+`references.ai_generate` → PHP reads file, calls Anthropic API → Claude returns JSON
+array of `{name, content}` → each saved as a new `.md` reference at display_order=0.
+
+Key files:
+- `www/lib/anthropic.php` — `call_anthropic($file_type, $content, $query)` → array or null
+- `www/model/references/do_ai_generate.php` — reads file, calls Claude, saves results
+- Model: `claude-sonnet-4-6` (configurable via `anthropic_model` in settings)
+
+Prompt always asks Claude to return a JSON array even for single results.
+Falls back to treating the whole response as one result if JSON parse fails.
 
 ---
 
@@ -94,62 +137,32 @@ PHP `notify_ws()` in: do_process_scan, do_toggle_follow, do_move_item
 
 ## Qt Viewer Details
 
-- `ApiPoller`: WS connection to `ws://[server]/things/ws`
+- `ApiPoller`: WS connection to `ws://[server]/things/ws` (derived from Settings::wsUrl())
   - First WS message: silently initialize (no startup pop-up)
   - On `last_scanned_item_id` change: HTTP-fetch `/viewer.get`, emit `stateChanged`
-  - Server down: 2s grace, then `serverReachabilityChanged(false)`
-  - Reconnect: every 3s on disconnect
+  - Server down: 2s grace → `serverReachabilityChanged(false)`; reconnect every 3s
 - `DocViewer`: QStackedWidget — QPdfView / QLabel / QTextBrowser
-  - PDF: write to QTemporaryFile, load via QPdfDocument (Qt 6.2 — no QIODevice overload)
-  - QPdfDocument::load() returns `DocumentError` (not `Status`) in Qt 6.2
+  - PDF: QTemporaryFile + QPdfDocument::load(); check `status()` not return value (Qt 6.4 compat)
 - `ErrorOverlay`: floating dark-red banner, reusable via `showMessage()`/`hideMessage()`
 - `ScannerInput`: evdev direct read, EVIOCGRAB exclusive, emits `barcodeScanned`
-- HID setup: `sudo usermod -aG input $USER`, then configure device in Settings
-- Mute: tray icon grays out, auto-show suppressed; double-click tray = show/hide
+- HID setup: `sudo usermod -aG input $USER`, udev rule for stable path, configure in Settings
+- Mute: tray icon grays, auto-show suppressed
 
 ---
 
 ## wsserver Details
 
-- `StateServer`: QWebSocketServer + QUdpSocket
+- `StateServer`: QWebSocketServer on :8765 + QUdpSocket on :8766
 - Polls `GET /things/state.get` every 10s (fallback)
-- On UDP datagram on :8766: immediately fetch + broadcast if changed
-- Sends current state to new WS clients on connect
-- Service: `/etc/systemd/system/things-ws.service` running as www-data
-- First-time setup: `bash /var/www/html/things/wsserver/setup-service.sh`
-- Redeploy: `rsync build/things-ws ... && ssh ... sudo systemctl restart things-ws`
+- On UDP datagram: fetch + broadcast immediately if changed
+- Service runs as `afabian`, restarts automatically
 
 ---
 
 ## Open Items
 
-- **Bulk quantity entry** — inline qty editing in items list (deferred by Andy)
-- **Qt viewer E2E test** — haven't run `make run` against live server post-WS refactor
-- **Location tree UI** — no reorder/visual nesting yet
-- **Item search** — basic text search exists; no filtering by location tree
-- **Authentication** — none, LAN-only single user
-
----
-
-## Build Commands
-
-```bash
-# Web
-bash deploy.sh
-
-# Qt viewer
-cd viewer && make        # build
-make run                 # build + run
-
-# WS server
-cd wsserver && make      # build
-# deploy: rsync build/things-ws to server, restart service
-```
-
----
-
-## DB Connection Info
-
-- Host: localhost (server-side)
-- DB: things / User: things / Pass: things
-- Admin: things_admin / things_admin (for schema changes)
+- **Qt viewer E2E test** — not run against live server since WS refactor
+- **AI Extract E2E test** — API key confirmed working; full PDF flow not tested yet
+- **HID scanner udev rule** — pending scanner hardware being plugged in
+- **Bulk quantity entry** — deferred
+- **Old git branches** — `api`, `webui` on origin; safe to delete
