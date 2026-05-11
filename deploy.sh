@@ -7,6 +7,7 @@ echo "Deploying to $SERVER:$DEST ..."
 rsync -a --delete \
     --exclude='.git/' \
     --exclude='parsed/' \
+    --exclude='uploads/' \
     --exclude='*.md' \
     --exclude='deploy.sh' \
     --exclude='claude_notes.md' \
