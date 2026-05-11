@@ -30,9 +30,15 @@ if ($results === null) return ['error' => 'AI request failed — check anthropic
 $upload_dir = $GLOBALS['fbx']['site_root'] . 'uploads/' . $item_id . '/';
 if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
 
+$cnt = mysqli_fetch_assoc(mysqli_safe_query(
+    "SELECT COUNT(*) AS n FROM item_references WHERE item_id = $item_id",
+    __FILE__, __LINE__
+));
+$next_order = (int)$cnt['n'];
+
 $created = [];
 
-foreach ($results as $result)
+foreach ($results as $idx => $result)
 {
 $name    = trim($result['name'] ?? 'AI Result');
 $content = trim($result['content'] ?? '');
@@ -41,12 +47,13 @@ if (!$content) continue;
 $filename  = 'ai_' . time() . '_' . uniqid() . '.md';
 file_put_contents($upload_dir . $filename, $content);
 
-$file_path_db = db_esc('uploads/' . $item_id . '/' . $filename);
-$name_db      = db_esc($name);
+$file_path_db  = db_esc('uploads/' . $item_id . '/' . $filename);
+$name_db       = db_esc($name);
+$display_order = $next_order + $idx;
 
 mysqli_safe_query(
     "INSERT INTO item_references (item_id, name, file_type, file_path, display_order)
-     VALUES ($item_id, '$name_db', 'md', '$file_path_db', 0)",
+     VALUES ($item_id, '$name_db', 'md', '$file_path_db', $display_order)",
     __FILE__, __LINE__
 );
 

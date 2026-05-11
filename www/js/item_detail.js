@@ -127,11 +127,8 @@ function renderRefs(refs) {
     var html = '';
     refs.forEach(function(r, i) {
         html += '<div class="row">' +
-            '<span style="color:#555;width:20px;text-align:right">' + r.display_order + '</span>' +
-            '<button onclick="moveRef(' + r.id + ',' + (r.display_order - 1) + ')"' +
-                (i === 0 ? ' disabled' : '') + '>^</button>' +
-            '<button onclick="moveRef(' + r.id + ',' + (r.display_order + 1) + ')"' +
-                (i === refs.length - 1 ? ' disabled' : '') + '>v</button>' +
+            '<button onclick="moveRef(' + r.id + ',\'up\')"'   + (i === 0              ? ' disabled' : '') + '>^</button>' +
+            '<button onclick="moveRef(' + r.id + ',\'down\')"' + (i === refs.length - 1 ? ' disabled' : '') + '>v</button>' +
             '<span class="tag">' + esc(r.file_type) + '</span>' +
             '<span>' + esc(r.name) + '</span>' +
             '<button class="btn-del" onclick="deleteRef(' + r.id + ')">x</button>' +
@@ -145,12 +142,12 @@ function renderRefs(refs) {
         .forEach(function(r) { $sel.append($('<option>').val(r.id).text(r.name)); });
 }
 
-function moveRef(refId, newOrder) {
+function moveRef(refId, direction) {
     $.ajax({
-        url: '?go=references.update&id=' + refId, method: 'POST',
+        url: '?go=references.reorder&item_id=' + ITEM_ID, method: 'POST',
         contentType: 'application/json',
-        data: JSON.stringify({display_order: newOrder}),
-        success: loadItem
+        data: JSON.stringify({id: refId, direction: direction}),
+        success: renderRefs
     });
 }
 

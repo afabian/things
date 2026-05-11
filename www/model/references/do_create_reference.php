@@ -17,9 +17,14 @@ if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
 $filename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($file['name']));
 if (!move_uploaded_file($file['tmp_name'], $upload_dir . $filename)) return 0;
 
-$file_path     = db_esc('uploads/' . $item_id . '/' . $filename);
-$name          = db_esc($input['name'] ?? $filename);
-$display_order = (int)($input['display_order'] ?? 0);
+$file_path = db_esc('uploads/' . $item_id . '/' . $filename);
+$name      = db_esc($input['name'] ?? $filename);
+
+$cnt = mysqli_fetch_assoc(mysqli_safe_query(
+    "SELECT COUNT(*) AS n FROM item_references WHERE item_id = $item_id",
+    __FILE__, __LINE__
+));
+$display_order = (int)$cnt['n'];
 
 mysqli_safe_query(
     "INSERT INTO item_references (item_id, name, file_type, file_path, display_order)

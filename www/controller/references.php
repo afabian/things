@@ -35,6 +35,17 @@ if (!$ref) api_exit(['error' => 'Not found'], 404);
 api_exit($ref);
 }
 
+function reorder()
+{
+$item_id   = (int)($input['item_id'] ?? 0);
+$id        = (int)($input['id'] ?? 0);
+$direction = $input['direction'] ?? '';
+if (!$item_id || !$id || !in_array($direction, ['up', 'down']))
+    api_exit(['error' => 'Invalid input'], 400);
+action('do_reorder_reference', $item_id, $id, $direction);
+api_exit(query('qry_list_references', $item_id));
+}
+
 function delete_ref()
 {
 $id = (int)($input['id'] ?? 0);
