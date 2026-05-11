@@ -91,7 +91,8 @@ void DocViewer::showPdf(const QByteArray &data)
     if (!m_tempPdf->open()) { showEmpty("Temp file error"); return; }
     m_tempPdf->write(data);
     m_tempPdf->flush();
-    if (m_pdfDoc->load(m_tempPdf->fileName()) != QPdfDocument::DocumentError::NoError) {
+    m_pdfDoc->load(m_tempPdf->fileName());
+    if (m_pdfDoc->status() != QPdfDocument::Status::Ready) {
         showEmpty("PDF load failed");
         return;
     }
