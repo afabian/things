@@ -4,8 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
-ExecStart=/var/www/html/things/wsserver/things-ws
+User=afabian
+WorkingDirectory=/home/afabian/things/wsserver
+ExecStart=/home/afabian/things/wsserver/build/things-ws
 Restart=always
 RestartSec=3
 StandardOutput=journal
