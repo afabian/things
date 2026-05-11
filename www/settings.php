@@ -11,4 +11,6 @@ $fbx['settings'] = array(
     'mysqli_database'     => 'things',
     'mysqli_user'         => 'things',
     'mysqli_pass'         => 'things',
+    'anthropic_api_key'  => '',
+    'anthropic_model'    => 'claude-sonnet-4-6',
 );

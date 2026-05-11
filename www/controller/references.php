@@ -43,6 +43,20 @@ action('do_delete_reference', $id);
 api_exit(['success' => true]);
 }
 
+function ai_generate()
+{
+$item_id = (int)($input['item_id'] ?? 0);
+$ref_id  = (int)($input['ref_id'] ?? 0);
+$query   = trim($input['query'] ?? '');
+if (!$item_id) api_exit(['error' => 'Missing item_id'], 400);
+if (!$ref_id)  api_exit(['error' => 'Missing ref_id'], 400);
+if (!$query)   api_exit(['error' => 'Missing query'], 400);
+set_time_limit(180);
+$results = action('do_ai_generate', $item_id, $ref_id, $query);
+if (isset($results['error'])) api_exit($results, 500);
+api_exit($results, 201);
+}
+
 function post()
 {
 }

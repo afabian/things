@@ -50,6 +50,23 @@
             <button class="btn-ok" onclick="uploadRef()">Upload</button>
         </div>
     </div>
+    <div style="margin-top:6px;padding-top:6px;border-top:1px solid #2a2a2a">
+        <h3>AI Extract</h3>
+        <div class="row">
+            <span class="lbl">Source doc</span>
+            <select id="ai-ref-id" style="width:220px"></select>
+        </div>
+        <div class="row">
+            <span class="lbl">Query</span>
+            <input type="text" id="ai-query" style="width:300px"
+                placeholder="e.g. pinout and register table">
+        </div>
+        <div class="row">
+            <span class="lbl"></span>
+            <button class="btn-ok" onclick="aiExtract()">Extract</button>
+            <span id="ai-status" style="color:#888;font-size:11px;margin-left:8px"></span>
+        </div>
+    </div>
 </div>
 
 <script>var ITEM_ID = <?=$item_id?>;</script>

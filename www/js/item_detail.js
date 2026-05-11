@@ -138,6 +138,11 @@ function renderRefs(refs) {
             '</div>';
     });
     $('#refs-list').html(html || '<div style="color:#555">No reference documents.</div>');
+
+    // Populate AI source dropdown — only pdf and image refs are useful inputs
+    var $sel = $('#ai-ref-id').empty().append('<option value="">-- choose source --</option>');
+    refs.filter(function(r) { return r.file_type === 'pdf' || r.file_type === 'image'; })
+        .forEach(function(r) { $sel.append($('<option>').val(r.id).text(r.name)); });
 }
 
 function moveRef(refId, newOrder) {
@@ -152,6 +157,38 @@ function moveRef(refId, newOrder) {
 function deleteRef(refId) {
     if (!confirm('Delete this reference?')) return;
     $.post('?go=references.delete_ref&id=' + refId, loadItem);
+}
+
+function aiExtract() {
+    var refId = parseInt($('#ai-ref-id').val());
+    var query = $('#ai-query').val().trim();
+    if (!refId) { showMsg('Select a source document', false); return; }
+    if (!query) { showMsg('Enter a query', false); return; }
+
+    $('#ai-status').text('Thinking...');
+    $('button').prop('disabled', true);
+
+    $.ajax({
+        url: '?go=references.ai_generate&item_id=' + ITEM_ID,
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ref_id: refId, query: query}),
+        timeout: 180000,
+        success: function(refs) {
+            $('button').prop('disabled', false);
+            $('#ai-status').text('');
+            if (refs.error) { showMsg(refs.error, false); return; }
+            $('#ai-query').val('');
+            loadItem();
+            showMsg('Created ' + refs.length + ' section' + (refs.length !== 1 ? 's' : ''), true);
+        },
+        error: function(xhr) {
+            $('button').prop('disabled', false);
+            $('#ai-status').text('');
+            var r = xhr.responseJSON;
+            showMsg(r && r.error ? r.error : 'AI request failed', false);
+        }
+    });
 }
 
 function uploadRef() {
