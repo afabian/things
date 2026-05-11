@@ -1,5 +1,6 @@
 #include "BrowserWindow.h"
 #include <QWebEngineView>
+#include <QStatusBar>
 #include <QCloseEvent>
 #include <QSettings>
 #include <QIcon>
